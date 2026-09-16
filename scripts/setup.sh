@@ -31,6 +31,40 @@ if [ -f "$MARKER" ]; then
     warn "Environment needs repair, re-running setup..."
 fi
 
+# Step 0: NixOS — pip-installed binary wheels (numpy/Pillow/opencv) fail to
+# dlopen shared libs (e.g. libstdc++.so.6) because NixOS has no FHS lib paths.
+# Build a proper nix-provided Python env instead and symlink it in as the venv.
+if [ -e /etc/NIXOS ] || [ -e /run/current-system/nixos-version ]; then
+    if command -v nix-build &>/dev/null; then
+        info "NixOS detected — building Python env via nix instead of pip venv"
+        NIX_ENV=$(nix-build --no-out-link -E \
+            'let pkgs = import <nixpkgs> {}; in pkgs.python3.withPackages (ps: with ps; [ pillow numpy pyfiglet opencv4 ])' \
+            2>/dev/null) || {
+            error "nix-build failed to create Python env"
+            exit 1
+        }
+        mkdir -p "$VENV_DIR/bin"
+        ln -sf "$NIX_ENV/bin/python3" "$VENV_DIR/bin/python"
+        ln -sf "$NIX_ENV/bin/python3" "$VENV_DIR/bin/python3"
+        "$VENV_DIR/bin/python" -c "
+import PIL, numpy, pyfiglet
+print('  pillow', PIL.__version__)
+print('  numpy', numpy.__version__)
+print('  pyfiglet', pyfiglet.__version__)
+try:
+    import cv2
+    print('  opencv', cv2.__version__)
+except ImportError:
+    print('  opencv: not installed (optional)')
+"
+        touch "$MARKER"
+        info "Setup complete! (nix-provided env)"
+        exit 0
+    else
+        warn "NixOS detected but 'nix-build' not on PATH — falling back to pip venv (will likely fail to import binary wheels)"
+    fi
+fi
+
 # Step 1: Find Python 3.8+
 PYTHON=""
 for cmd in python3 python; do
