@@ -35,12 +35,20 @@ fi
 # dlopen shared libs (e.g. libstdc++.so.6) because NixOS has no FHS lib paths.
 # Build a proper nix-provided Python env instead and symlink it in as the venv.
 if [ -e /etc/NIXOS ] || [ -e /run/current-system/nixos-version ]; then
-    if command -v nix-build &>/dev/null; then
+    if command -v nix &>/dev/null; then
         info "NixOS detected — building Python env via nix instead of pip venv"
+        PY_EXPR='let pkgs = (builtins.getFlake "nixpkgs").legacyPackages.${builtins.currentSystem}; in pkgs.python3.withPackages (ps: with ps; [ ps.pillow ps.numpy ps.pyfiglet ps.opencv4 ])'
+        # Flakes-native: resolves via the nix flake registry, independent of
+        # NIX_PATH/channels (which a flake-only setup may not have at all).
+        NIX_ENV=$(nix build --no-link --print-out-paths \
+            --extra-experimental-features 'nix-command flakes' --impure \
+            --expr "$PY_EXPR" 2>/dev/null) || \
+        # Fallback for systems with nix-command/flakes disabled: classic
+        # NIX_PATH/channel-based lookup via nix-build.
         NIX_ENV=$(nix-build --no-out-link -E \
             'let pkgs = import <nixpkgs> {}; in pkgs.python3.withPackages (ps: with ps; [ pillow numpy pyfiglet opencv4 ])' \
             2>/dev/null) || {
-            error "nix-build failed to create Python env"
+            error "nix build/nix-build both failed to create Python env"
             exit 1
         }
         mkdir -p "$VENV_DIR/bin"
